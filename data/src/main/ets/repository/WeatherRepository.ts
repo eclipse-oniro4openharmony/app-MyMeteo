@@ -1,7 +1,10 @@
 import { IWeatherRemoteDataSource } from '../datasource/remote/IWeatherRemoteDataSource';
 import { IWeatherLocalDataSource } from '../datasource/local/IWeatherLocalDataSource';
-import { City, CurrentWeather, Forecast } from '../net/dto/WeatherDTO';
+import { City, CurrentWeather, Forecast, LatLng } from '../net/dto/WeatherDTO';
 import { WeatherData } from '../model/WeatherData';
+import { CityWeatherData } from '../model/CityWeatherData';
+import { ILocationProvider } from '../datasource/local/ILocationProvider';
+import { AppError } from '../common/AppError';
 
 const LOG_TAG = 'WeatherRepository';
 
@@ -12,16 +15,31 @@ const LOG_TAG = 'WeatherRepository';
 export class WeatherRepository {
   private remoteDataSource: IWeatherRemoteDataSource;
   private localDataSource: IWeatherLocalDataSource;
-  private FIFTEEN_MINUTES = 1 * 60 * 1000;
+  private locationProvider: ILocationProvider;
+  private readonly FIFTEEN_MINUTES: number = 15 * 60 * 1000;
+  private cacheWrite: Promise<void> = Promise.resolve();
+  private cityGenerations: Map<number, number> = new Map<number, number>();
+
+  /** Serialize database mutations, without holding the queue during network requests. */
+  private writeCache(action: () => Promise<void>): Promise<void> {
+    const result = this.cacheWrite.then(action);
+    this.cacheWrite = result.catch(() => {});
+    return result;
+  }
+
+  private cityGeneration(cityId: number): number {
+    return this.cityGenerations.get(cityId) ?? 0;
+  }
 
   /**
    * Creates a new instance of WeatherRepository.
    * @param {IWeatherRemoteDataSource} remoteDataSource - The remote data source for weather (API calls).
    * @param {IWeatherLocalDataSource} localDataSource - The local data source (e.g. DB or IndexedDB).
    */
-  constructor(remoteDataSource: IWeatherRemoteDataSource, localDataSource: IWeatherLocalDataSource) {
+  constructor(remoteDataSource: IWeatherRemoteDataSource, localDataSource: IWeatherLocalDataSource, locationProvider: ILocationProvider) {
     this.remoteDataSource = remoteDataSource;
     this.localDataSource = localDataSource;
+    this.locationProvider = locationProvider;
   }
 
   /**
@@ -32,18 +50,26 @@ export class WeatherRepository {
    * @param {City} city - The city object containing IDs and coordinates.
    * @returns {Promise<WeatherData>} A promise that resolves to the weather data (current + forecast).
    */
-  async getWeatherData(city: City): Promise<WeatherData> {
+  async getWeatherData(city: City, forceRefresh: boolean = false): Promise<WeatherData> {
+    if (!city || city.place_id === undefined || !Number.isFinite(city.lat) || !Number.isFinite(city.lon)) {
+      throw new AppError(1003, 'Invalid city or coordinates.');
+    }
     console.info(`[${LOG_TAG}] getWeatherData start for city: ${JSON.stringify(city)}`);
 
     console.debug(`[${LOG_TAG}] Ensuring city is saved locally (cityId=${city.place_id})`);
-    await this.saveCity(city);
+    const generation = this.cityGeneration(city.place_id);
+    await this.saveCity(city, generation);
+
+    if (forceRefresh) {
+      return this.fetchAndSaveWeatherData(city, generation);
+    }
 
     console.debug(`[${LOG_TAG}] Trying to get local data for cityId=${city.place_id}...`);
     const localData = await this.localDataSource.getWeatherData(city.place_id);
 
     if (!localData || !localData.currentWeather || !localData.forecast) {
       console.warn(`[${LOG_TAG}] No local data (or incomplete). Will fetch fresh data from remote...`);
-      return this.fetchAndSaveWeatherData(city);
+      return this.fetchAndSaveWeatherData(city, generation);
     }
 
     console.debug(`[${LOG_TAG}] Local data found: ${JSON.stringify(localData)}`);
@@ -51,7 +77,12 @@ export class WeatherRepository {
 
     if (this.isDataObsolete(lastUpdated)) {
       console.warn(`[${LOG_TAG}] Local data is obsolete (lastUpdated=${lastUpdated}). Fetching new data...`);
-      return this.fetchAndSaveWeatherData(city);
+      try {
+        return await this.fetchAndSaveWeatherData(city, generation);
+      } catch (error) {
+        // Stale data remains useful when the network is unavailable.
+        return localData;
+      }
     }
 
     console.info(`[${LOG_TAG}] Local data is fresh enough. Returning local data.`);
@@ -64,7 +95,7 @@ export class WeatherRepository {
    * @param {City} city - The city for which to fetch data.
    * @returns {Promise<WeatherData>} A promise resolving to freshly fetched weather data.
    */
-  private async fetchAndSaveWeatherData(city: City): Promise<WeatherData> {
+  private async fetchAndSaveWeatherData(city: City, generation: number): Promise<WeatherData> {
     console.info(`[${LOG_TAG}] fetchAndSaveWeatherData -> fetching data from remote for cityId=${city.place_id}`);
 
     const [ currentWeather, forecast ] = await Promise.all([
@@ -77,7 +108,7 @@ export class WeatherRepository {
     console.debug(`[${LOG_TAG}] Received forecast: ${JSON.stringify(forecast)}`);
 
     console.info(`[${LOG_TAG}] Saving new weather data to local DB...`);
-    await this.saveWeatherData(city.place_id, currentWeather, forecast, lastUpdated);
+    await this.saveWeatherData(city.place_id, currentWeather, forecast, lastUpdated, generation);
 
     console.info(`[${LOG_TAG}] Returning newly fetched data for cityId=${city.place_id}`);
     return { currentWeather, forecast, lastUpdated };
@@ -88,7 +119,10 @@ export class WeatherRepository {
    * @param {number} lastUpdated - Timestamp (ms) of last update.
    * @returns {boolean} True if the data is older than 15 min, false otherwise.
    */
-  private isDataObsolete(lastUpdated: Date): boolean {
+  private isDataObsolete(lastUpdated: Date | null): boolean {
+    if (!lastUpdated || !Number.isFinite(lastUpdated.getTime())) {
+      return true;
+    }
     const now = Date.now();
     const last = lastUpdated.getTime();
     const diff = now - last;
@@ -109,6 +143,40 @@ export class WeatherRepository {
     return this.localDataSource.getAllCities();
   }
 
+  async deleteSavedCity(city: City): Promise<void> {
+    if (!city || !Number.isFinite(city.place_id)) {
+      throw new AppError(1003, 'Invalid saved city.');
+    }
+    // Invalidate work started before this deletion, including requests still on the network.
+    this.cityGenerations.set(city.place_id, this.cityGeneration(city.place_id) + 1);
+    await this.writeCache(async () => { await this.localDataSource.deleteCity(city); });
+  }
+
+  /** Most recently retrieved complete weather, independent of city insertion order. */
+  async getLastSavedWeatherData(): Promise<CityWeatherData | null> {
+    const cities = await this.localDataSource.getAllCities();
+    let latest: CityWeatherData | null = null;
+    let latestTimestamp: number = -1;
+    for (const city of cities) {
+      if (city.place_id === undefined || !Number.isFinite(city.lat) || !Number.isFinite(city.lon)) {
+        continue;
+      }
+      try {
+        const weather = await this.localDataSource.getWeatherData(city.place_id);
+        const timestamp = weather.lastUpdated?.getTime() ?? NaN;
+        if (weather.currentWeather?.current && weather.forecast?.daily?.time?.length &&
+          Number.isFinite(timestamp) && timestamp > latestTimestamp) {
+          latest = { city, weather };
+          latestTimestamp = timestamp;
+        }
+      } catch (error) {
+        // One unreadable record must not hide other usable saved weather.
+        console.warn('Unable to read saved weather for city ' + city.place_id);
+      }
+    }
+    return latest;
+  }
+
   /**
    * Returns saved weather data (if exists) for a given city from the local database.
    * @param {number} cityId - The place_id of the city.
@@ -124,9 +192,13 @@ export class WeatherRepository {
    * @param {City} city - The city object to be saved.
    * @returns {Promise<void>}
    */
-  async saveCity(city: City): Promise<void> {
+  async saveCity(city: City, generation: number = this.cityGeneration(city.place_id)): Promise<void> {
     console.debug(`[${LOG_TAG}] saveCity -> cityId=${city.place_id}, name=${city.name}`);
-    await this.localDataSource.saveCity(city);
+    await this.writeCache(async () => {
+      if (generation === this.cityGeneration(city.place_id)) {
+        await this.localDataSource.saveCity(city);
+      }
+    });
   }
 
   /**
@@ -141,10 +213,15 @@ export class WeatherRepository {
     cityId: number,
     currentWeather: CurrentWeather,
     forecast: Forecast,
-    lastUpdated: Date
+    lastUpdated: Date,
+    generation: number = this.cityGeneration(cityId)
   ): Promise<void> {
     console.debug(`[${LOG_TAG}] saveWeatherData -> cityId=${cityId}, lastUpdated=${lastUpdated}`);
-    await this.localDataSource.saveWeatherData(cityId, currentWeather, forecast, lastUpdated);
+    await this.writeCache(async () => {
+      if (generation === this.cityGeneration(cityId)) {
+        await this.localDataSource.saveWeatherData(cityId, currentWeather, forecast, lastUpdated);
+      }
+    });
   }
 
   /**
@@ -155,6 +232,21 @@ export class WeatherRepository {
   async searchCity(query: string): Promise<City[]> {
     console.info(`[${LOG_TAG}] searchCity: query="${query}"`);
     return this.remoteDataSource.searchCity(query);
+  }
+
+  /**
+   * Searches for a city by coordinates via the remote data source.
+   *
+   * @param {number} latitude Latitude in decimal degrees (e.g., 52.2297).
+   * @param {number} longitude Longitude in decimal degrees (e.g., 21.0122).
+   * @param {number} zoom Zoom level used by the reverse geocoding endpoint.
+   * @returns {Promise<City>} A promise that resolves to the matching `City` object.
+   */
+  async searchCityByCoordinates(latitude: number, longitude: number, zoom: number): Promise<City> {
+    console.info(
+      `[${LOG_TAG}] searchCityByCoordinates: latitude=${latitude}, longitude=${longitude}, zoom=${zoom}`
+    );
+    return this.remoteDataSource.searchCityByCoordinates(latitude, longitude, zoom);
   }
 
   /**
@@ -178,5 +270,10 @@ export class WeatherRepository {
   async getForecast(latitude: number, longitude: number): Promise<Forecast> {
     console.info(`[${LOG_TAG}] getForecast -> lat=${latitude}, lon=${longitude}`);
     return this.remoteDataSource.getForecast(latitude, longitude);
+  }
+
+  async getCurrentLocation(): Promise<LatLng> {
+    console.info(`[${LOG_TAG}] getCurrentLocation`);
+    return this.locationProvider.getCurrentLocation();
   }
 }

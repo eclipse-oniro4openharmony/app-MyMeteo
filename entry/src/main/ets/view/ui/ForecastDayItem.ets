@@ -1,10 +1,11 @@
-import { getDayOfWeek } from '../../common/Tools';
+import { getDayOfWeek } from '@mymeteo/common';
 import { WeatherIcon } from './WeatherIcon';
 
 @Component
 export struct ForecastDayItem {
 
   @Prop date: number;
+  @Prop utcOffsetSeconds: number | undefined = undefined;
   @Prop precipitationProbability: number;
   @Prop weatherCode: number;
   @Prop maxTemp: number;
@@ -15,16 +16,11 @@ export struct ForecastDayItem {
   build() {
     Row() {
 
-      Text(`${getDayOfWeek(this.date)}`)
+      Text(`${getDayOfWeek(this.date, this.utcOffsetSeconds)}`)
         .fontSize(15)
         .fontColor(Color.White)
         .fontWeight(FontWeight.Bold)
-        .textShadow({
-          color: '#88000000',
-          offsetX: 2,
-          offsetY: 2,
-          radius: 2
-        })
+        .textShadow({ color: '#33182431', offsetX: 0, offsetY: 1, radius: 3 })
         .width("35%");
 
       Image($r('app.media.ic_small_rain')).height(16).margin({right: 2});

@@ -1,0 +1,65 @@
+# Wearable PoC and shared core review
+
+## Scope
+
+The existing wearable PoC is completed without adding a new weather feature.
+The mobile product remains `default`; the wearable product is `watch`.
+Both products use API 23 for compilation/targeting and API 20 as their minimum.
+
+## Review findings addressed
+
+- Replaced global repository lookup at module-load time with explicit injection before UI startup.
+- Removed GPS calls from ability initialization; the wearable page requests permissions first.
+- Permission denial returns a result to the UI instead of terminating the ability.
+- GPS, reverse-geocoding, network and missing-data errors remain visible with the existing flow available for retry.
+- Normalized Nominatim's string coordinates and validated city/weather responses.
+- Restored the documented 15-minute cache lifetime and stale-cache fallback when refresh fails.
+- Removed the unused, unimplemented location method from the database datasource interface.
+- Preserved `is_day` and `weather_code` when writing the weather cache.
+- Derived weather display values from current props rather than retaining the first prop snapshot.
+- Released HTTP resources on success and all failure paths; added 10-second connection/read timeouts.
+- Closed RDB result sets even when row mapping throws.
+- Corrected the database context import and removed the duplicate wearable float resource.
+- Isolated the wearable HAP from the mobile build through product/module mappings.
+- Retried HTTP 429/502/503/504 (three attempts, exponential backoff); `Retry-After` seconds and HTTP dates are honored, and a wait above five seconds returns a readable error instead of retrying early. Open-Meteo intermittently answers 503 "The service is overloaded".
+- Accepted approximate location access when precise location is declined.
+- Forecast weekdays are computed for the forecast location: Open-Meteo daily timestamps are local midnights, which the device time zone shifted to the previous day west of the city. Fresh forecasts use `utc_offset_seconds`; cached ones (no stored offset) use the location's noon in UTC, exact for offsets between -12 h and +12 h.
+- Ordered saved cities by the most recent visit; their cards preview the last saved weather icon and temperature without network requests. A menu button to the right of the search field opens the saved cities from any screen and invalidates the requests of the screen it leaves.
+- Added long-press deletion of saved cities behind a native **Delete?** confirmation. The city and its cached weather and forecast are removed in one transaction; a failure rolls back and keeps the entry with a toast.
+- Serialized cache writes and invalidated requests started before a deletion, so late responses cannot recreate deleted rows. Superseded search, weather and history responses no longer replace newer screens.
+
+## Verification
+
+- [GitHub Actions verification of the merge](https://github.com/pmandes/app-MyMeteo/actions/runs/38399555081) passed core tests and both product builds, producing signed mobile and watch HAP artifacts.
+- 65 host regression tests pass against production code with substituted platform APIs. HTTP checks cover retry until success, giving up after three attempts, `Retry-After` seconds/dates/malformed values and the five-second wait budget. History checks cover newest-first reads, confirmation before deletion, transactional deletion with rollback, late reads/responses after deletion, cache-write serialization, superseded searches and city requests, previews that read saved weather only and follow the latest history read, the saved-cities menu ignoring a pending search, and forecast weekdays for Warsaw, Auckland and New York times independent of the device time zone. Refresh checks cover bypassing a fresh cache, preserving cached and displayed weather/timestamps on failure, stopping the spinner, forwarding the mobile refresh flag, ignoring a late response after leaving the page, and formatting retrieval time in the device time zone.
+- Mobile startup tests cover location permission denial/errors, successful location weather, GPS/geocoding/weather failures, selecting the latest usable saved weather, unreadable records, empty history, unavailable database and protection of manual search from a late location response.
+- Background tests run the production handlers in both products and cover weather-code families, waiting for image readiness, the 2.4-second fade, keeping the previous background until completion, skipping fades within the same family and ignoring stale animation completion callbacks.
+- Mobile startup opened current weather and forecast for the existing emulator's location (Covent Garden); the clear weather background rendered behind both cards. A refresh updated the retrieval time without restarting the background transition. A captured pull gesture confirmed the white spinner is visible below the search overlay.
+- A Springfield search verified native text entry/submission, the compact 64vp search overlay, white 15vp query text with a soft shadow, and translucent result cards matching the weather panels. Both results and history use the same shared city item and reserve side space for its shadow.
+- Spinner visibility is tied to active dragging/refreshing and cleared in `finally` after success or failure. Idle custom-header geometry can no longer leave an animated indicator below the search panel.
+- The shared weather images also render on Huawei_Wearable, cropped to its viewport with a soft blue overlay for text contrast. Current location weather, units and the existing PoC flow remain intact.
+- Wearable content reserves 36vp on each side and 32vp at the top/bottom. Build and deployment passed; the existing 466px Huawei_Wearable viewport displays the city, coordinates, all weather parameters, temperature and units without clipping.
+- Volla X23 connected over USB reports API 23 (Release). The latest signed mobile HAP installed and launched without uninstalling or clearing data. On-device inspection confirmed current weather, the weekly forecast, the cloudy background, matching status/search glass and no idle refresh spinner. After reconnection, the 1.0.0 mobile HAP (same OpenHarmony test signature) updated the existing installation without clearing data, with white status-bar text. With outbound traffic for the app's UID rejected by `iptables`, pull-to-refresh on Warszawa failed, logged "Weather refresh failed; keeping previous data", stopped the spinner and kept the weather and its retrieval time (10:57:40). After removing the rule, the next pull fetched new data and updated the retrieval time (10:59:14). Without a GPS fix indoors, startup opened the most recently saved weather.
+- Both signed HAPs build using SDK 6.1.0.32 (API 23). Their packaged metadata declares `minAPIVersion: 20` and `targetAPIVersion: 23`.
+- Deployment and ability startup succeeded on the existing API 20 emulators: Pura 80 Pro and Huawei_Wearable.
+- Mobile city search returned Warszawa; selecting it loaded the forecast.
+- Wearable permission denial leaves the application open with a readable error and Retry.
+- Granting foreground location access successfully obtained the device location and weather.
+- Emulator checks caught ArkUI dropping custom getters from component output. Both weather views now read directly from their current `@Prop` data; emulator display verification confirms numeric temperature, wind, pressure, humidity and units in both products.
+- Mobile weather and forecast panels use a darker translucent blue background and a bounded soft shadow; the full-width scroll content reserves side insets for the blur.
+- Mobile system bars overlay the gradient with glass panels; the scrollable content passes beneath them. A long Springfield search verified that the search panel collapses on upward scrolling and returns on downward scrolling, retaining the query.
+- Pulling down on the Warszawa weather screen fetched data despite the fresh cache and changed the retrieval timestamp below the forecast. The timestamp follows the device locale and time zone.
+- Softened text shadows with a translucent dark blue, no horizontal offset and a small blur in both UIs.
+- Replaced the green mobile and red wearable startup backgrounds with light blue colors matching their existing UIs.
+- Emulator 6.1 does not support the CLI geolocation injection command; the existing device location was used.
+- On Pura 80 Pro, the saved cities showed the saved weather icon and temperature on every card. Opening Gdańsk moved it to the top of the history. Long-pressing Kraków opened **Delete?** with the city name; **Cancel** kept it, **Delete** removed it. After an application restart, Kraków remained absent, and the pulled database contained no Kraków rows in `tbl_city`, `tbl_weather` or `tbl_forecast` while the other cities kept theirs.
+- An Open-Meteo 503 reproduced from the host succeeded on the next attempt; after the retry change, city search and weather retrieval succeeded on the emulator.
+- The menu button opened the saved cities from the location weather screen. The status bar shows white text over the backgrounds; page loading reset the bar style, so it is applied again after `loadContent`. The separator between the status bar and the search panel was removed, and 50vp of space follows the retrieval time. The loading indicator is centred on the screen instead of the top of the scrolling content (the pull-to-refresh spinner is unchanged; the wearable loader was already centred).
+- With the emulator in Europe/London, Open-Meteo returned Poznan days Wednesday 14 to Tuesday 20 October while the app listed Tuesday to Monday. After the fix, cached (Szczecin, Covent Garden) and freshly fetched (Lublin) forecasts list Wednesday to Tuesday.
+- README screenshots were captured on Pura 80 Pro (Warszawa and the saved cities) and Huawei_Wearable. Emulator 6.1 cannot inject a location, so the wearable screenshot used a temporary, uncommitted build with the Warszawa coordinates of the mobile screenshot; city-level reverse geocoding returns the English name "Warsaw". The original screenshot file remains in `images/`.
+
+## Limits
+
+This is a foreground PoC. Wearable cold start requires device location and a network
+connection for reverse geocoding. There is no background update service or phone/watch
+synchronization. Development HAPs are for local testing, not store distribution.

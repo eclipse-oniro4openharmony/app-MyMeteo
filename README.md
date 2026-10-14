@@ -1,10 +1,24 @@
 # MyMeteo
+
+![Platform](https://img.shields.io/badge/platform-OpenHarmony-0a59f7)
+![Devices](https://img.shields.io/badge/devices-phone%20%7C%20wearable-0a59f7)
+![API](https://img.shields.io/badge/API-20%2B%20(target%2023)-0a59f7)
+![Language](https://img.shields.io/badge/lang-ArkTS%20%2F%20ArkUI-orange)
+![Data](https://img.shields.io/badge/data-Open--Meteo%20%7C%20Nominatim-lightgrey)
+![License](https://img.shields.io/badge/license-Apache%202.0-green)
+
 ## Description
 
 MyMeteo is a weather forecast application that allows users to search for and view weather information for different cities, including both current conditions and future predictions.
 The application fetches data from the OpenMeteo API and displays it in a user-friendly format.
 
-![MyMeteo](images/MyMeteo.png)
+<p align="center">
+  <img src="images/MyMeteo-mobile.png" alt="MyMeteo mobile: Warszawa weather and forecast" height="520">
+  &nbsp;
+  <img src="images/MyMeteo-saved-cities.png" alt="MyMeteo mobile: saved cities with weather previews" height="520">
+  &nbsp;
+  <img src="images/MyMeteo-watch.png" alt="MyMeteo wearable: Warszawa current weather" height="260">
+</p>
 
 ## Application functionality
 
@@ -16,17 +30,74 @@ The application fetches data from the OpenMeteo API and displays it in a user-fr
 - Displaying weather data stored in the database if they are not older than 15 minutes. Otherwise, data is refreshed from the API.
 - The application works offline; if there is no connection, it displays cached data.
 
+## Products and current behavior
+
+| Product | Entry module | Devices | Scope |
+| --- | --- | --- | --- |
+| `default` | `entry` | Mobile (`default`) | Location weather, city search, daily forecast and saved cities with weather previews |
+| `watch` | `watch` | Wearable | Foreground current-location weather PoC |
+
+Both products compile and target **API 23**, with **API 20** as the minimum.
+They share the `data` and `common` libraries; each entry module uses its `default`
+module target. Select the product to choose the mobile or wearable application.
+
+Mobile startup requests foreground location permission (approximate access is
+sufficient) and opens weather and the forecast for the device location. If permission,
+GPS, geocoding or weather retrieval fails, it opens the most recently retrieved
+complete weather stored in the database. With no usable saved weather, it opens the
+empty search screen. Manual search takes precedence over a late startup location
+response.
+
+The mobile background extends beneath translucent system bars. The status bar, with
+white text, and the compact search panel share darker glass without a separator; city
+lists and weather panels scroll beneath them. The search panel collapses on upward
+scrolling and returns on downward scrolling. Search results and saved cities use the
+same translucent cards and soft shadows as weather panels. White text and darker
+panels improve contrast.
+
+Saved cities are ordered by the most recent visit, newest first. The menu button to
+the right of the search field opens this list from any screen. Each card shows the
+weather icon and temperature last saved for that city, read only from the database
+regardless of age; cities without saved current weather show no preview. Long-press a
+saved city to open the native **Delete?** dialog. **Cancel** keeps the entry;
+**Delete** removes the city and its cached weather/forecast in one database
+transaction. On a database error, the entry remains visible and a toast explains the
+failure. Pending requests cannot restore deleted data; selecting the city again
+intentionally saves it. Search and weather responses are applied only while their
+request remains current.
+
+Pull down at the top of the mobile weather screen to bypass the 15-minute cache and
+fetch current weather and forecast again. A failed refresh keeps the displayed data
+and its original retrieval time. A white spinner appears only while dragging or
+refreshing; the retrieval time is shown below the forecast in the device time zone.
+
+Both products share pastel blue backgrounds for clear, cloudy, rainy and snowy weather.
+A decoded image fades in over 2.4 seconds above the gradient or previous background;
+refreshing the same weather family does not restart the animation. The wearable crops
+the background to its viewport and uses a blue overlay for text contrast.
+See the [GPT Image prompts and asset paths](images/weather-backgrounds/PROMPTS.md).
+
+The wearable PoC requests permission before obtaining location, reverse-geocodes it
+with Nominatim and displays current weather. Permission denial leaves the app open;
+failure states offer Retry. Cold start requires location and network access. The PoC
+does not include background updates, phone/watch synchronization or additional views.
+
+Build, test and verification instructions are provided [below](#build-and-run).
+The existing API, database, repository and MVVM documentation follows.
+
 ## Technology Stack
 
 - **Open Harmony:** The app is built for the Open Harmony, an open-source, distributed operating system designed for smart devices and IoT applications.
-- **SDK v4.1 (API 11)**
-- **AktTS:** ArkTS is OpenHarmony's high-level programming language that simplifies development with a declarative UI paradigm and enhanced static analysis while maintaining familiar TypeScript syntax for improved robustness and performance.
+- **OpenHarmony SDK 6.1 (API 23); minimum supported API 20**
+- **ArkTS:** ArkTS is OpenHarmony's high-level programming language that simplifies development with a declarative UI paradigm and enhanced static analysis while maintaining familiar TypeScript syntax for improved robustness and performance.
 - **ArkUI:** ArkUI is a declarative UI framework in the OpenHarmony SDK that simplifies the creation of intuitive and responsive interfaces for smart devices.
 - **ArkData:** ArkData is a data management and synchronization framework in OpenHarmony that supports secure storage, data sharing, backup, and synchronization across devices, including capabilities for unified data definitions, key-value stores, and relational databases.
 
 **OH SDK Documentation:**
 
-https://docs.openharmony.cn/pages/v4.1/en/application-dev/application-dev-guide.md
+[OpenHarmony application development documentation](https://github.com/openharmony/docs/tree/master/en/application-dev)
+
+The [original SDK 4.1 guide](https://docs.openharmony.cn/pages/v4.1/en/application-dev/application-dev-guide.md) remains useful for the database and architecture examples, but builds now require API 23.
 
 
 ## APIs Used
@@ -44,11 +115,11 @@ https://docs.openharmony.cn/pages/v4.1/en/application-dev/application-dev-guide.
 
 ## Base URLs
 
-- **OpenStreetMap API:**  
-  `http://nominatim.openstreetmap.org`
+- **OpenStreetMap API:**
+  `https://nominatim.openstreetmap.org`
 
-- **OpenMeteo API:**  
-  `http://api.open-meteo.com`
+- **OpenMeteo API:**
+  `https://api.open-meteo.com`
 
 ## Endpoints & Methods
 
@@ -56,9 +127,9 @@ The `WeatherAPI` class provides methods to search for cities and retrieve both c
 
 ### 1. Search City
 
-**Endpoint URL Template:** 
+**Endpoint URL Template:**
 ```bash
-http://nominatim.openstreetmap.org/search?city={city}&format=jsonv2&addressdetails=1
+https://nominatim.openstreetmap.org/search?city={city}&format=jsonv2&addressdetails=1
 ```
 
 **Method Signature:**
@@ -67,7 +138,7 @@ async searchCity(query: string): Promise<City[]>
 ```
 
 **Description:**
-Searches for city information by replacing the `{city}` placeholder in the URL with the URL-encoded city name provided in the `query` parameter. The API returns an array of `City` objects containing geolocation and address details.
+Searches for city information by replacing the `{city}` placeholder in the URL with the URL-encoded city name provided in the `query` parameter. Nominatim returns string coordinates; the API wrapper validates the response and normalizes latitude and longitude to numeric application DTOs.
 
 **Parameters:**
 
@@ -86,7 +157,7 @@ console.log(JSON.stringify(cities));
 **Endpoint URL Template:**
 
 ```bash
-http://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,showers,snowfall,weather_code,cloud_cover,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_days=1
+https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,rain,showers,snowfall,weather_code,cloud_cover,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m,wind_gusts_10m&forecast_days=1
 ```
 
 **Method Signature:**
@@ -96,7 +167,7 @@ async getCurrentWeather(latitude: number, longitude: number): Promise<CurrentWea
 ```
 
 **Description:**
-Retrieves the current weather for a specified location using latitude and longitude coordinates. Although the method includes a cityId parameter, it is not used to build the URL. After fetching the weather data, the method sets a last_update property with the current date/time.
+Retrieves the current weather for a specified location using latitude and longitude coordinates. After fetching the weather data, the method sets a last_update property with the current date/time.
 
 **Parameters:**
 
@@ -117,7 +188,7 @@ console.log(JSON.stringify(currentWeather));
 **Endpoint URL Template:**
 
 ```bash
-http://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,daylight_duration,sunshine_duration,uv_index_max,uv_index_clear_sky_max,precipitation_sum,rain_sum,showers_sum,snowfall_sum,precipitation_hours,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant,shortwave_radiation_sum,et0_fao_evapotranspiration&timeformat=unixtime&timezone=auto
+https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&daily=weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,daylight_duration,sunshine_duration,uv_index_max,uv_index_clear_sky_max,precipitation_sum,rain_sum,showers_sum,snowfall_sum,precipitation_hours,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant,shortwave_radiation_sum,et0_fao_evapotranspiration&timeformat=unixtime&timezone=auto
 ```
 
 **Method Signature:**
@@ -141,6 +212,24 @@ A promise that resolves to a `Forecast` object containing the daily forecast det
 const forecast = await weatherAPI.getForecast(52.2297, 21.0122);
 console.log(JSON.stringify(forecast));
 ```
+
+### 4. Reverse Geocoding
+
+**Endpoint URL Template:**
+
+```text
+https://nominatim.openstreetmap.org/reverse?lat={latitude}&lon={longitude}&zoom={zoom}&format=jsonv2&accept-language=en-GB
+```
+
+**Method Signature:**
+
+```typescript
+async reverseGeocoding(latitude: number, longitude: number, zoom: number = 10): Promise<City>
+```
+
+Maps coordinates to a city and validates/normalizes the returned coordinates.
+The repository exposes this through `searchCityByCoordinates(latitude, longitude, zoom)`.
+`LocationProvider` supplies foreground device coordinates after the page handles permission.
 
 ### HTTP Request Details ###
 
@@ -171,47 +260,90 @@ The `makeHttpRequest` function is used to make asynchronous HTTP requests to ext
   - Configures the request with the provided URL and method.
   - Sets the `Content-Type` header to `application/json`.
   - Handles the request's response, including error handling and response parsing.
-  - If the response status code is not 200, it rejects the promise with an appropriate `AppError`.
+  - Retries HTTP 429/502/503/504 up to three total attempts; other non-200 responses produce an `AppError`.
+  - Honors `Retry-After` seconds and HTTP dates. If the requested delay exceeds five seconds, it returns the error without retrying early; missing/invalid headers use exponential backoff.
   - Parses the response data as JSON and resolves the promise with the parsed data.
   - Handles any parsing errors by rejecting the promise with an appropriate `AppError`.
+  - Applies 10-second connection/read timeouts and releases the request in `finally` on success or failure.
 
 ```typescript
 import http from '@ohos.net.http';
 import { AppError } from '../common/AppError';
 
+const MAX_ATTEMPTS = 3;
+const BASE_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 5000;
+// Keep interactive requests bounded; do not retry before the server permits it.
+const RETRYABLE_STATUS_CODES: number[] = [429, 502, 503, 504];
+
 export async function makeHttpRequest<T>(url: string, method: http.RequestMethod): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const httpRequest = http.createHttp();
-    httpRequest.request(url, {
-      method: method,
-      header: {
-        'Content-Type': 'application/json'
-      }
-    }, (err, data: http.HttpResponse) => {
-      
-      console.debug('HTTP request: ' + method + ' ' + url);
-      
-      if (err) {
-        console.error('An error occurred:', JSON.stringify(err));
-        reject(new AppError(1001, 'Unable to fetch data'));
-        return;
-      }
+  for (let attempt = 1; ; attempt++) {
+    const response = await sendRequest(url, method);
+    if (response.responseCode === 200) {
       try {
-        console.debug('Response code:' + data.responseCode);
-
-        if (data.responseCode != 200) {
-          reject(new AppError(1002, 'HTTP error ' + data.responseCode));
-        }
-
-        const response: T = JSON.parse(data.result as string);
-        resolve(response);
-
-      } catch (parseError) {
-        console.error('Error parsing data:', parseError);
-        reject(new AppError(1003, 'Invalid response format'));
+        return JSON.parse(response.result as string) as T;
+      } catch (error) {
+        throw new AppError(1003, 'Invalid response format');
       }
+    }
+    if (attempt >= MAX_ATTEMPTS || !RETRYABLE_STATUS_CODES.includes(response.responseCode)) {
+      throw new AppError(1002, httpErrorMessage(response.responseCode));
+    }
+    const delay = retryDelay(response, attempt);
+    if (delay > MAX_RETRY_DELAY_MS) {
+      throw new AppError(1002, httpErrorMessage(response.responseCode));
+    }
+    console.warn(`[makeHttpRequest] HTTP ${response.responseCode}, retry ${attempt}/${MAX_ATTEMPTS - 1} in ${delay} ms`);
+    await sleep(delay);
+  }
+}
+
+async function sendRequest(url: string, method: http.RequestMethod): Promise<http.HttpResponse> {
+  // An HttpRequest object serves a single request, so every attempt needs a new one.
+  const request = http.createHttp();
+  try {
+    return await request.request(url, {
+      method: method,
+      header: { 'Content-Type': 'application/json', 'User-Agent': 'MyMeteo/1.0 (https://github.com/pmandes/app-MyMeteo)' },
+      connectTimeout: 10000,
+      readTimeout: 10000
     });
-  });
+  } catch (error) {
+    throw new AppError(1001, 'Unable to fetch data. Check your connection.');
+  } finally {
+    request.destroy();
+  }
+}
+
+function retryDelay(response: http.HttpResponse, attempt: number): number {
+  const retryAfter = headerValue(response.header, 'retry-after');
+  if (retryAfter) {
+    const value = retryAfter.trim();
+    if (/^\d+$/.test(value)) { return Number(value) * 1000; }
+    const date = /^[A-Za-z]/.test(value) ? Date.parse(value) : NaN;
+    if (Number.isFinite(date)) { return Math.max(0, date - Date.now()); }
+  }
+  return Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1), MAX_RETRY_DELAY_MS);
+}
+
+function headerValue(header: Object, name: string): string | undefined {
+  const headers = (header ?? {}) as Record<string, string>;
+  const key = Object.keys(headers).find(key => key.toLowerCase() === name);
+  return key === undefined ? undefined : String(headers[key]);
+}
+
+function httpErrorMessage(responseCode: number): string {
+  if (responseCode === 429) {
+    return 'Too many requests (HTTP 429). Try again in a moment.';
+  }
+  if (responseCode === 502 || responseCode === 503 || responseCode === 504) {
+    return `Service temporarily unavailable (HTTP ${responseCode}). Try again in a moment.`;
+  }
+  return 'HTTP error ' + responseCode;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
 }
 ```
 
@@ -222,7 +354,7 @@ import { makeHttpRequest } from './path/to/makeHttpRequest';
 import http from '@ohos.net.http';
 
 async function searchCity(city: string) {
-  const url = `http://nominatim.openstreetmap.org/search?city={city}${city}&formmat=jsonv2`;
+  const url = `https://nominatim.openstreetmap.org/search?city=${encodeURIComponent(city)}&format=jsonv2`;
   try {
     const data = await makeHttpRequest(url, http.RequestMethod.GET);
     console.log('Cities:', JSON.stringify(data));
@@ -238,6 +370,8 @@ searchCity('Warszawa');
 # Implementation of Database Access #
 
 In this project, access to a relational database (`RDB`) is provided using the `@ohos.data.relationalStore` module. The system is divided into several layers, which facilitates easy extension, testing, and maintenance of the code.
+
+The current database layer closes query result sets in `finally`, including when row mapping throws.
 
 A basic `ORM` framework has been created that simplifies the implementation of database handling in other projects.
 
@@ -262,7 +396,7 @@ To work with abstract database operations, you must copy (or create) the essenti
 
   - `static getTableName()`: Returns the table name.
   - `static getTableColumns()`: Returns the list of table columns.
-  
+
 - `DbTable`
 
    An interface that defines the structure for a table configuration. It contains:
@@ -301,7 +435,7 @@ export class DBConfig {
     sqlCreate: 'CREATE TABLE IF NOT EXISTS tbl_city(' +
       'id INTEGER PRIMARY KEY,' +
       'name TEXT, ' +
-      'display_name TEXT,' +
+      'display_name TEXT, ' +
       'latitude REAL,' +
       'longitude REAL,' +
       'timestamp DATETIME)',
@@ -324,7 +458,7 @@ export class MyMeteoDB extends BaseRelationalDatabase {
     super(rdbStore);
   }
 
-  public static async getInstance(context: Context): Promise<MyMeteoDB> {
+  public static async getInstance(context: common.Context): Promise<MyMeteoDB> {
     if (!MyMeteoDB.instance) {
       const store = await relationalStore.getRdbStore(context, DBConfig.STORE_CONFIG);
       await MyMeteoDB.initializeTables(store);
@@ -337,9 +471,9 @@ export class MyMeteoDB extends BaseRelationalDatabase {
   private static async initializeTables(store: relationalStore.RdbStore): Promise<void> {
     await store.executeSql(DBConfig.CITY_TABLE.sqlCreate);
     console.debug(`DB Table created: ${DBConfig.CITY_TABLE.tableName}[${DBConfig.CITY_TABLE.columns}]`);
-    
+
     // Initialization of other tables...
-    
+
   }
 }
 ```
@@ -399,7 +533,10 @@ export interface ICityDAO {
 
 ### DAO Implementation – `CityDAORdb` ###
 
-The `CityDAORdb` class implements the `ICityDAO` interface and uses the methods from `BaseRelationalDatabase` (accessed via the `MyMeteoDB` singleton) to perform operations on the `City` table.
+The `CityDAORdb` class implements the `ICityDAO` interface and uses the methods from `BaseRelationalDatabase` (accessed via the `MyMeteoDB` singleton) to perform operations on the `City` table. History is sorted by descending `timestamp`, then `id`.
+Deletion uses `BaseRelationalDatabase.deleteInTransaction()` to remove the associated
+`tbl_weather` and `tbl_forecast` rows together with the city; any failure rolls back all three.
+The implementation imports `WeatherEntity` and `ForecastEntity` for those table names.
 
 ```typescript
 export class CityDAORdb implements ICityDAO {
@@ -413,7 +550,7 @@ export class CityDAORdb implements ICityDAO {
     return this.db.query(
       CityEntity.getTableName(),
       CityEntity.getTableColumns(),
-      (predicates) => predicates,
+      (predicates) => predicates.orderByDesc('timestamp').orderByDesc('id'),
       (resultSet: relationalStore.ResultSet) => resultSetToCities(resultSet)
     );
   }
@@ -442,16 +579,20 @@ export class CityDAORdb implements ICityDAO {
     return this.db.update<CityEntity>(
       CityEntity.getTableName(),
       cityToEntity(city),
-      (predicates) => predicates.equalTo(CityEntity.getTableColumns()[0], city.place_id),
+      (predicates) => predicates.equalTo(
+        CityEntity.getTableColumns()[0], city.place_id
+      ),
       (entity) => entityToRecord(entity)
     );
   }
 
   async deleteCity(city: City): Promise<number> {
-    return this.db.delete<CityEntity>(
-      CityEntity.getTableName(),
-      (predicates) => predicates.equalTo(CityEntity.getTableColumns()[0], city.place_id)
-    );
+    const rows = await this.db.deleteInTransaction([
+      new relationalStore.RdbPredicates(WeatherEntity.getTableName()).equalTo('city_id', city.place_id),
+      new relationalStore.RdbPredicates(ForecastEntity.getTableName()).equalTo('city_id', city.place_id),
+      new relationalStore.RdbPredicates(CityEntity.getTableName()).equalTo('id', city.place_id)
+    ]);
+    return rows[2];
   }
 }
 ```
@@ -536,16 +677,16 @@ Finally, below is an example demonstrating how to use the previously defined com
   import { MyMeteoDB } from './db/MyMeteoDB';
   import { CityDAORdb } from './dao/CityDAORdb';
   import { City } from './net/dto/WeatherDTO';
-  
+
   // Example function to initiate database operations
   async function runCityOperations(context: Context) {
     try {
       // 1. Obtain the database instance (singleton)
       const dbInstance = await MyMeteoDB.getInstance(context);
-      
+
       // 2. Create a DAO instance for City
       const cityDAO = new CityDAORdb(dbInstance);
-  
+
       // 3. Insert a new city record
       const newCity: City = {
         place_id: 164566061,
@@ -557,24 +698,24 @@ Finally, below is an example demonstrating how to use the previously defined com
       };
       const insertId = await cityDAO.insertCity(newCity);
       console.log('Inserted City with ID:', insertId);
-  
+
       // 4. Retrieve all cities
       const cities = await cityDAO.getAllCities();
       console.log('All cities:', JSON.stringify(cities));
-  
+
       // 5. Retrieve a city by a specific ID
       const cityById = await cityDAO.getCityById(164566061);
       console.log('City with ID 164566061:', cityById);
-  
+
       // 6. Update the city record
       newCity.name = 'Warsaw - Updated';
       const updatedRows = await cityDAO.updateCity(newCity);
       console.log('Number of rows updated:', updatedRows);
-  
+
       // 7. Delete the city record
       const deletedRows = await cityDAO.deleteCity(newCity);
       console.log('Number of rows deleted:', deletedRows);
-  
+
     } catch (error) {
       console.error('Error during DB operations:', JSON.stringify(error));
     }
@@ -594,9 +735,13 @@ In this section, we have covered the following steps:
 
 **This modular approach makes the system easy to extend and maintain.**
 
+The retained diagrams illustrate the core architecture; their editable sources are
+[db.iuml](images/db.iuml), [repository.iuml](images/repository.iuml) and
+[mvvm.iuml](images/mvvm.iuml). Initialization and product details are described below.
+
 ### Class diagram: ###
 
-![UML-data-layer](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/pmandes/app-MyMeteo/refs/heads/db/images/db.iuml)
+![UML-data-layer](https://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/eclipse-oniro4openharmony/app-MyMeteo/refs/heads/main/images/db.iuml)
 
 ## Implementation of the Repository Pattern ##
 
@@ -622,90 +767,106 @@ Below, selected code fragments illustrate these points.
 The repository is instantiated and configured in a dedicated initialization function. This process sets up the remote and local data sources and wires them into the repository. For example:
 ```typescript
 private async initDbAndRepo(): Promise<void> {
-  try {
-    // 1. Initialize the database connection using the MyMeteoDB singleton.
-    const dbInstance = await MyMeteoDB.getInstance(this.context);
-
-    // 2. Create the WeatherRepository by instantiating:
-    //    - A remote data source using WeatherRemoteDataSource (which wraps a WeatherAPI instance).
-    //    - A local data source using WeatherLocalDataSource (with DAO implementations for City, Weather, and Forecast).
-    this.repository = new WeatherRepository(
-      new WeatherRemoteDataSource(new WeatherAPI()),
-      new WeatherLocalDataSource(
-        new CityDAORdb(dbInstance),
-        new WeatherDAORdb(dbInstance),
-        new ForecastDAORdb(dbInstance)
-      )
-    );
-
-    // 3. Make the repository globally accessible.
-    globalThis.weatherRepository = this.repository;
-
-    // 4. Retrieve and log saved cities.
-    const cities = await this.repository.getSavedCities();
-    hilog.warn(0x0000, 'testTag', 'Saved cities: %{public}s', JSON.stringify(cities));
-
-  } catch (error) {
-    hilog.error(0x0000, 'testTag', 'DB init error: %{public}s', JSON.stringify(error));
-  }
+  const dbInstance = await MyMeteoDB.getInstance(this.context);
+  const repository = new WeatherRepository(
+    new WeatherRemoteDataSource(new WeatherAPI()),
+    new WeatherLocalDataSource(
+      new CityDAORdb(dbInstance),
+      new WeatherDAORdb(dbInstance),
+      new ForecastDAORdb(dbInstance)
+    ),
+    new LocationProvider()
+  );
+  weatherViewModel.setRepository(repository);
 }
 ```
+
+Both abilities initialize the database and inject the repository into their ViewModel
+before loading the page. Repository access no longer depends on `globalThis`. The page
+handles location permission before requesting coordinates.
 
 ### Retrieving Weather Data with Caching Logic ###
 
 The repository exposes a unified method for obtaining weather data. It checks for local (cached) data first and decides whether to fetch fresh data based on its freshness.
 
 ```typescript
-async getWeatherData(city: City): Promise<WeatherData> {
-  console.info(`[Repository] getWeatherData for city: ${JSON.stringify(city)}`);
+  async getWeatherData(city: City, forceRefresh: boolean = false): Promise<WeatherData> {
+    if (!city || city.place_id === undefined || !Number.isFinite(city.lat) || !Number.isFinite(city.lon)) {
+      throw new AppError(1003, 'Invalid city or coordinates.');
+    }
+    console.info(`[${LOG_TAG}] getWeatherData start for city: ${JSON.stringify(city)}`);
 
-  // Ensure the city is saved locally.
-  await this.saveCity(city);
+    console.debug(`[${LOG_TAG}] Ensuring city is saved locally (cityId=${city.place_id})`);
+    const generation = this.cityGeneration(city.place_id);
+    await this.saveCity(city, generation);
 
-  // Retrieve local weather data.
-  const localData = await this.localDataSource.getWeatherData(city.place_id);
+    if (forceRefresh) {
+      return this.fetchAndSaveWeatherData(city, generation);
+    }
 
-  // If no local data is found or data is incomplete, fetch fresh data.
-  if (!localData || !localData.currentWeather || !localData.forecast) {
-    console.warn(`[Repository] Incomplete local data, fetching remote data...`);
-    return this.fetchAndSaveWeatherData(city);
+    console.debug(`[${LOG_TAG}] Trying to get local data for cityId=${city.place_id}...`);
+    const localData = await this.localDataSource.getWeatherData(city.place_id);
+
+    if (!localData || !localData.currentWeather || !localData.forecast) {
+      console.warn(`[${LOG_TAG}] No local data (or incomplete). Will fetch fresh data from remote...`);
+      return this.fetchAndSaveWeatherData(city, generation);
+    }
+
+    console.debug(`[${LOG_TAG}] Local data found: ${JSON.stringify(localData)}`);
+    const { lastUpdated } = localData;
+
+    if (this.isDataObsolete(lastUpdated)) {
+      console.warn(`[${LOG_TAG}] Local data is obsolete (lastUpdated=${lastUpdated}). Fetching new data...`);
+      try {
+        return await this.fetchAndSaveWeatherData(city, generation);
+      } catch (error) {
+        // Stale data remains useful when the network is unavailable.
+        return localData;
+      }
+    }
+
+    console.info(`[${LOG_TAG}] Local data is fresh enough. Returning local data.`);
+    return localData;
   }
-
-  // Check if the local data is obsolete.
-  if (this.isDataObsolete(localData.lastUpdated)) {
-    console.warn(`[Repository] Local data is obsolete, fetching new data...`);
-    return this.fetchAndSaveWeatherData(city);
-  }
-
-  console.info(`[Repository] Returning fresh local data.`);
-  return localData;
-}
 ```
+Normal reads return fresh cached weather within 15 minutes. If fetching stale data
+fails, the repository returns the previous complete cached data. `forceRefresh: true`
+bypasses the cache and propagates errors so the mobile page can retain the currently
+displayed data and timestamp. `getLastSavedWeatherData()` selects complete saved weather
+by retrieval time, independently of the order in which cities were inserted.
+
+The repository serializes database mutations and invalidates older requests for a
+deleted city. Network calls run outside this queue. The generation passed through
+the following snippets is checked again before persistence, so a late response cannot
+recreate deleted cache rows. See the complete
+[WeatherRepository implementation](data/src/main/ets/repository/WeatherRepository.ts).
+
 ### 3. Fetching and Saving Fresh Data ###
 
 When the repository determines that the local data is missing or outdated, it fetches new data from the remote source and updates the local storage:
 
 ```typescript
-private async fetchAndSaveWeatherData(city: City): Promise<WeatherData> {
-  console.info(`[Repository] Fetching data from remote for cityId=${city.place_id}`);
+  private async fetchAndSaveWeatherData(city: City, generation: number): Promise<WeatherData> {
+    console.info(`[${LOG_TAG}] fetchAndSaveWeatherData -> fetching data from remote for cityId=${city.place_id}`);
 
-  // Fetch current weather and forecast concurrently.
-  const [ currentWeather, forecast ] = await Promise.all([
-    this.remoteDataSource.getCurrentWeather(city.lat, city.lon),
-    this.remoteDataSource.getForecast(city.lat, city.lon)
-  ]);
+    const [ currentWeather, forecast ] = await Promise.all([
+      this.remoteDataSource.getCurrentWeather(city.lat, city.lon),
+      this.remoteDataSource.getForecast(city.lat, city.lon)
+    ]);
 
-  const lastUpdated = new Date();
+    const lastUpdated = new Date();
+    console.debug(`[${LOG_TAG}] Received currentWeather: ${JSON.stringify(currentWeather)}`);
+    console.debug(`[${LOG_TAG}] Received forecast: ${JSON.stringify(forecast)}`);
 
-  // Save the freshly fetched data into local storage.
-  await this.saveWeatherData(city.place_id, currentWeather, forecast, lastUpdated);
+    console.info(`[${LOG_TAG}] Saving new weather data to local DB...`);
+    await this.saveWeatherData(city.place_id, currentWeather, forecast, lastUpdated, generation);
 
-  console.info(`[Repository] Returning newly fetched data.`);
-  return { currentWeather, forecast, lastUpdated };
-}
+    console.info(`[${LOG_TAG}] Returning newly fetched data for cityId=${city.place_id}`);
+    return { currentWeather, forecast, lastUpdated };
+  }
 ```
 
-![UML-repository](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/pmandes/app-MyMeteo/refs/heads/db/images/repository.iuml)
+![UML-repository](https://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/eclipse-oniro4openharmony/app-MyMeteo/refs/heads/main/images/repository.iuml)
 
 ### Conclusion ###
 The **Repository** pattern is implemented by the `WeatherRepository` class, which abstracts and coordinates data access between remote and local sources. Key methods such as `getWeatherData` and `fetchAndSaveWeatherData` demonstrate how the repository decides whether to use cached data or fetch fresh data. The provided UML diagram illustrates the relationships and dependencies among the repository, data sources, and supporting classes.
@@ -717,7 +878,7 @@ By centralizing data access logic, this design simplifies the rest of the applic
 In this project, the `MVVM` (Model-View-ViewModel) pattern is used to separate concerns, making the application easier to extend, test, and maintain. The architecture is divided into three primary layers:
 
 - **Model**:
-  
+
   Represents the data and business logic. In our project, this includes data structures (such as `City`, `WeatherData`, `CurrentWeather`, and `Forecast`), as well as the data access layer (e.g., `WeatherRepository` and the associated remote and local data sources).
 
 - **ViewModel**:
@@ -747,60 +908,89 @@ In this project, the `MVVM` (Model-View-ViewModel) pattern is used to separate c
 
   The `WeatherViewModel` is responsible for:
 
-  - Retrieving data from the model by calling methods on the repository (e.g., `getSavedCities()`, `searchCity()`, `getWeatherData(city)`). 
-  - Managing the application state (for example, keeping track of the current view state, list of cities, current weather, and errors). 
+  - Retrieving data from the model by calling methods on the repository (e.g., `getSavedCities()`, `searchCity()`, `getWeatherData(city)`, `getStartupWeather()`).
+  - Reading saved weather previews for saved cities (`getSavedCityWeather()`) and deleting saved cities (`deleteSavedCity()`).
+  - Managing the application state (for example, keeping track of the current view state, list of cities, current weather, and errors).
   - Delegating user actions to the repository.
 
   ```typescript
+  import { AppError, City, CityWeatherData, CurrentWeather, WeatherData, WeatherRepository } from '@mymeteo/data';
+
+  export interface SavedCityWeather {
+    cityId: number;
+    currentWeather: CurrentWeather;
+  }
+
   export class WeatherViewModel {
     private repository?: WeatherRepository;
 
-    /**
-     * Creates a new instance of WeatherViewModel.
-     * @param {WeatherRepository} repository - The repository to access weather and city data.
-     */
-    constructor(repository: WeatherRepository) {
-      console.debug(`[${LOG_TAG}] created...`);
+    setRepository(repository: WeatherRepository): void {
       this.repository = repository;
     }
 
-    async getSavedCities(): Promise<City[]> {
+    private getRepository(): WeatherRepository {
       if (!this.repository) {
-        console.error(`[${LOG_TAG}] No repository. Returning empty array.`);
-        return [];
+        throw new AppError(1100, 'Unable to initialize the weather database. Restart the app.');
       }
+      return this.repository;
+    }
 
-      console.info(`[${LOG_TAG}] getSavedCities -> Retrieving saved cities...`);
-      const cities: City[] = await this.repository.getSavedCities();
-      console.info(`[${LOG_TAG}] Saved cities: ${JSON.stringify(cities)}`);
-      return cities;
+    async getSavedCities(): Promise<City[]> {
+      return this.getRepository().getSavedCities();
+    }
+
+    async deleteSavedCity(city: City): Promise<void> {
+      await this.getRepository().deleteSavedCity(city);
+    }
+
+    /** History previews read only saved data, regardless of its age. */
+    async getSavedCityWeather(cities: City[]): Promise<SavedCityWeather[]> {
+      const saved: SavedCityWeather[] = [];
+      for (const city of cities) {
+        try {
+          const data = await this.getRepository().getSavedWeatherData(city.place_id);
+          if (data.currentWeather?.current) {
+            saved.push({ cityId: city.place_id, currentWeather: data.currentWeather });
+          }
+        } catch (error) {
+          // An absent or unreadable cache must not hide the saved city itself.
+          console.warn('Unable to read history weather for city ' + city.place_id);
+        }
+      }
+      return saved;
     }
 
     async searchCity(query: string): Promise<City[]> {
-      if (!this.repository) {
-        console.error(`[${LOG_TAG}] No repository. searchCity returning empty array.`);
-        return [];
-      }
-      console.info(`[${LOG_TAG}] searchCity: ${query}`);
-      return this.repository.searchCity(query);
+      return this.getRepository().searchCity(query);
     }
 
-    async getWeatherData(city: City): Promise<WeatherData> {
-      console.info(`[${LOG_TAG}] getWeatherData called for city: ${city.name} (id=${city.place_id})`);
-      if (!this.repository) {
-        console.error(`[${LOG_TAG}] No repository. Returning empty WeatherData.`);
-        return { currentWeather: null, forecast: null, lastUpdated: null };
+    async getWeatherData(city: City, forceRefresh: boolean = false): Promise<WeatherData> {
+      return this.getRepository().getWeatherData(city, forceRefresh);
+    }
+
+    async getStartupWeather(locationAllowed: boolean): Promise<CityWeatherData | null> {
+      if (locationAllowed) {
+        try {
+          const repository = this.getRepository();
+          const location = await repository.getCurrentLocation();
+          const city = await repository.searchCityByCoordinates(location.latitude, location.longitude, 13);
+          const weather = await repository.getWeatherData(city);
+          if (weather.currentWeather?.current && weather.forecast?.daily?.time?.length) {
+            return { city, weather };
+          }
+        } catch (error) {
+          console.warn('Local weather unavailable; trying saved weather.');
+        }
       }
       try {
-        const weatherData = await this.repository.getWeatherData(city);
-        console.info(`[${LOG_TAG}] getWeatherData -> Received data: ${JSON.stringify(weatherData)}`);
-        return weatherData;
-      } catch (err) {
-        console.error(`[${LOG_TAG}] getWeatherData error: `, err);
-        return { currentWeather: null, forecast: null, lastUpdated: null };
+        return await this.getRepository().getLastSavedWeatherData();
+      } catch (error) {
+        return null;
       }
     }
   }
+
+  export const weatherViewModel: WeatherViewModel = new WeatherViewModel();
   ```
 
 ### 3. View ###
@@ -809,9 +999,17 @@ In this project, the `MVVM` (Model-View-ViewModel) pattern is used to separate c
 
    The View (e.g., the main component `Index`) is responsible for rendering the user interface and handling user interactions. It:
 
-  - Maintains reactive state variables (using` @State`) to reflect the current UI state, such as `viewState`, `cities`, `selectedCity`, `currentWeather`, `forecast`, and `error`.
+  - Maintains reactive state variables (using `@State`) to reflect the current UI state, such as `viewState`, `cities`, `savedCities`, `savedCityWeather`, `selectedCity`, `currentWeather`, `forecast`, and `error`.
   - Calls methods on the ViewModel to retrieve data (for instance, invoking `getSavedCities()` or `getWeatherData()`).
   - Dynamically renders components (like `SearchBarComponent`, `ResultsComponent`, `CityDetailsComponent`, `LoadingComponent`, and `ErrorComponent`) based on the current `viewState`.
+
+The following simplified layout shows how `Index` wires the View to the ViewModel.
+The full `entry/src/main/ets/pages/Index.ets` also handles location-based startup,
+scrolling glass overlays, pull-to-refresh, preserving existing weather on refresh
+failure and asynchronous background transitions. It owns search/weather requests and
+ignores superseded responses; child components forward selection, search and confirmed
+deletion through callbacks. Its startup calls
+`weatherViewModel.getStartupWeather(locationAllowed)` after permission handling.
 
 ```typescript
 @Entry
@@ -819,68 +1017,58 @@ In this project, the `MVVM` (Model-View-ViewModel) pattern is used to separate c
 struct Index {
   @State viewModel: WeatherViewModel = weatherViewModel;
   @State viewState: ViewState = ViewState.IDLE;
+  @State savedCities: City[] = [];
+  @State savedCityWeather: SavedCityWeather[] = [];
 
   /// ... other State variables
 
-  // Called when the Index page is about to appear;
-  // Then, it initiates the fetching of saved cities to update the UI with the latest local city data.
+  // Opens location weather, then the latest saved weather, then the empty search screen.
   aboutToAppear(): void {
-    console.debug("Index page is about to appear...");
-    this.fetchSavedCities();
+    this.loadInitialWeather();
   }
 
-  // Constructs and returns the UI layout based on the current state.
-  // Dynamically renders components (e.g., search bar, results, city details, loading, error) according to 'viewState'.      
+  // Renders components according to 'viewState'. Children receive data as props and
+  // report user actions through callbacks; the page owns every request.
   build() {
-    Column() {
-    
-      SearchBarComponent({
-        viewState: this.viewState,
-        cities: this.cities,
-        error: this.error
-      })
-
-      if (this.viewState == ViewState.IDLE || this.viewState == ViewState.SHOW_RESULTS) {
-      
-        ResultsComponent({
-          viewState: this.viewState,
-          results: this.cities,
-          savedCities: this.savedCities,
-          selectedCity: this.selectedCity,
-          currentWeather: this.currentWeather,
-          forecast: this.forecast
-        });
-        
-      } else if (this.viewState == ViewState.SHOW_CITY) {
-  
-        CityDetailsComponent({
-          viewState: this.viewState,
-          city: this.selectedCity,
-          currentWeather: this.currentWeather,
-          forecast: this.forecast
-        });
-  
-      } else if (this.viewState == ViewState.LOADING) {
-  
-        LoadingComponent();
-  
-      } else if (this.viewState == ViewState.ERROR) {
-  
-        ErrorComponent({ error: this.error });
-  
+    Stack({ alignContent: Alignment.Top }) {
+      Column() {
+        if (this.viewState === ViewState.IDLE || this.viewState === ViewState.SHOW_RESULTS) {
+          ResultsComponent({ viewState: this.viewState, results: this.cities, savedCities: this.savedCities,
+            savedCityWeather: this.savedCityWeather, historyBusy: this.historyBusy,
+            onCitySelect: (city: City) => this.selectCity(city),
+            onDeleteCity: (city: City) => this.deleteSavedCity(city) })
+        } else if (this.viewState === ViewState.SHOW_CITY) {
+          CityDetailsComponent({ city: this.selectedCity, currentWeather: this.currentWeather,
+            forecast: this.forecast, updatedAt: this.updatedAt })
+        } else if (this.viewState === ViewState.ERROR) {
+          ErrorComponent({ error: this.error })
+        }
       }
+
+      // The loader is centred on the whole screen, above the scrolling content.
+      if (this.viewState === ViewState.LOADING) {
+        LoadingComponent()
+      }
+
+      SearchBarComponent({ onSearch: (query: string) => this.searchCities(query) })
     }
   }
 
-  // Asynchronously fetches the list of saved cities from the global weatherViewModel 
-  // and updates the 'savedCities' state, triggering an automatic UI refresh when the data is loaded.
-  async fetchSavedCities() {
-    this.savedCities = await weatherViewModel.getSavedCities();
+  // Loads saved cities, then their saved weather previews; a newer read or a deletion
+  // invalidates the older one.
+  async fetchSavedCities(): Promise<void> {
+    const generation = ++this.historyGeneration;
+    const cities = await this.viewModel.getSavedCities();
+    if (generation !== this.historyGeneration) { return; }
+    this.savedCities = cities;
+    const weather = await this.viewModel.getSavedCityWeather(cities);
+    if (generation !== this.historyGeneration) { return; }
+    this.savedCityWeather = weather;
   }
 }
 ```
 
-### `State Management` ### 
+### `State Management` ###
 
 State in this project is managed primarily within the View using reactive variables (annotated with `@State`). These variables include:
 
@@ -889,6 +1077,9 @@ Tracks the current view mode (e.g., `IDLE`, `LOADING`, `ERROR`, `SHOW_RESULTS`, 
 
 - `cities` and `savedCities`:
 Arrays that hold the list of cities from search results and those saved locally.
+
+- `savedCityWeather`:
+Saved current weather shown as a preview on each saved city.
 
 - `selectedCity`, `currentWeather`, `forecast`:
 Hold detailed data for the selected city.
@@ -900,18 +1091,24 @@ Changes in these state variables trigger automatic updates of the UI, ensuring t
 
 The following sequence diagram illustrates how the Model, ViewModel, and View interact within the MVVM architecture:
 
-![UML-repository](http://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/pmandes/app-MyMeteo/refs/heads/db/images/mvvm.iuml)
+![UML-repository](https://www.plantuml.com/plantuml/proxy?cache=no&src=https://raw.githubusercontent.com/eclipse-oniro4openharmony/app-MyMeteo/refs/heads/main/images/mvvm.iuml)
 
 
 ## Project Modularization ##
 
-The project is divided into two primary modules:
+The project is divided into four modules:
 
 1. **Entry Module:**
 Contains the main ability, the user interface (UI), and the associated ViewModel. This module is responsible for all presentation logic.
 
 2. **Data Module:**
 Contains the data layer, which includes the repository, data sources (both remote and local), database access (DB, DAO), and API communication. This module encapsulates all data access functionality using the Repository pattern.
+
+3. **Watch Module:**
+Contains the wearable ability, foreground location-weather UI and its ViewModel.
+
+4. **Common Module:**
+Contains shared utilities, permission handling, resources and weather backgrounds.
 
 ### Module Definitions ###
 
@@ -924,7 +1121,8 @@ The data module is defined by its own `module.json5` file:
     "name": "data",
     "type": "har",
     "deviceTypes": [
-      "default"
+      "default",
+      "wearable"
     ]
   }
 }
@@ -937,14 +1135,14 @@ Inside the data module, the `Index.ts` file exposes key classes and types to be 
 ```typescript
 export { WeatherRepository } from './src/main/ets/repository/WeatherRepository';
 export { WeatherData } from './src/main/ets/model/WeatherData';
-        
+
 // ... other exports ...
 ```
 
 This approach allows other modules (like the **entry** module) to import these classes using a simple path e.g.
 ```typescript
-import { City, WeatherData, WeatherRepository } from '@mymeteo/data';)
-````
+import { City, WeatherData, WeatherRepository } from '@mymeteo/data';
+```
 rather than using complex relative paths.
 
 **Package Definition for the Data Module**
@@ -953,10 +1151,10 @@ The data module is packaged as `@mymeteo/data` via its `oh-package.json5` file:
 {
   "name": "@mymeteo/data",
   "version": "1.0.0",
-  "description": "Data module for MyMeteo app providing access to different data sources via Repository pattern",
+  "description": "Data module for MyMeteo app providing access to different data sources via Repository pattern.",
   "main": "Index.ts",
   "dependencies": {},
-  
+
   ...
 }
 ```
@@ -971,12 +1169,13 @@ The entry module contains the UI layer and associated ViewModels. To use the cla
 {
   "name": "entry",
   "version": "1.0.0",
-  "description": "Entry module with presentation layer.",
-  "main": "",
+  "description": "Entry module with presentation (UI) layer.",
+  "main": "Index.ts",
   "dependencies": {
-    "@mymeteo/data": "../data"
+    "@mymeteo/data": "../data",
+    "@mymeteo/common": "../common"
   },
-  
+
   ...
 }
 ```
@@ -984,28 +1183,36 @@ This dependency declaration allows developers in the entry module to import clas
 
 
 ### Build Configuration ###
-The main build profile (`build-profile.json5`) includes both modules in the project. For example:
+The main build profile (`build-profile.json5`) includes both entry products and their shared libraries. The following excerpt omits local signing materials:
 
 ```json
 {
   "app": {
-    "signingConfigs": [
-      {
-         .... signing keys, etc. ....
-      }
-    ],
     "products": [
       {
         "name": "default",
         "signingConfig": "default",
-        "compileSdkVersion": 11,
-        "compatibleSdkVersion": 11,
+        "compileSdkVersion": 23,
+        "compatibleSdkVersion": 20,
+        "targetSdkVersion": 23,
+        "runtimeOS": "OpenHarmony"
+      },
+      {
+        "name": "watch",
+        "signingConfig": "default",
+        "compileSdkVersion": 23,
+        "compatibleSdkVersion": 20,
+        "targetSdkVersion": 23,
         "runtimeOS": "OpenHarmony"
       }
     ],
     "buildModeSet": [
-      { "name": "debug" },
-      { "name": "release" }
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
     ]
   },
   "modules": [
@@ -1015,18 +1222,54 @@ The main build profile (`build-profile.json5`) includes both modules in the proj
       "targets": [
         {
           "name": "default",
-          "applyToProducts": [ "default" ]
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "watch",
+      "srcPath": "./watch",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "watch"
+          ]
         }
       ]
     },
     {
       "name": "data",
-      "srcPath": "./data"
+      "srcPath": "./data",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default",
+            "watch"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "common",
+      "srcPath": "./common",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default",
+            "watch"
+          ]
+        }
+      ]
     }
   ]
 }
 ```
-This configuration file ensures that both modules are included in the final build, with their respective source paths specified. The entry module is set as the main module for the UI, while the data module is available as a dependency.
+This configuration builds `entry` only for the `default` product and `watch` only for the `watch` product. Both products depend on `data` and `common`, which support mobile and wearable devices. Configure a local signing configuration named `default` in DevEco Studio.
 
 ---
 
@@ -1050,10 +1293,14 @@ Below is a simplified file structure of the project illustrating the key directo
 │               │   ├── SearchBarComponent.ets
 │               │   ├── ResultsComponent.ets
 │               │   ├── CityDetailsComponent.ets
-│               │   ├── LoadingComponent.ets
-│               │   └── ErrorComponent.ets
+│               │   ├── CurrentWeatherComponent.ets
+│               │   ├── WeekForecastComponent.ets
+│               │   └── /ui                   // City card, icons, loading and error views
+│               │       ├── CityInfoItem.ets
+│               │       ├── LoadingComponent.ets
+│               │       └── ErrorComponent.ets
 │               └── /viewmodel
-│                   └── WeatherViewModel.ets
+│                   └── WeatherViewModel.ts
 │
 ├── /data
 │   ├── oh-package.json5                   // Data module package definition
@@ -1082,6 +1329,69 @@ Below is a simplified file structure of the project illustrating the key directo
 │               └── /model
 │                   └── WeatherData.ts
 │
-├── build-profile.json5                    // Main build configuration (includes both modules)
+├── /watch                                // Wearable entry module
+│   ├── oh-package.json5
+│   └── /src/main/ets
+│       ├── /watchability/WatchAbility.ets
+│       ├── /pages/Index.ets
+│       └── /viewmodel/WeatherViewModel.ts
+│
+├── /common                               // Shared utilities, permissions and resources
+│   ├── Index.ets
+│   └── /src/main
+│       ├── /ets/utils/WeatherBackground.ts
+│       └── /resources/base/media          // Shared weather background images
+│
+├── /tests/core.test.cjs                   // Production-code host regression tests
+├── VALIDATION.md                         // Review and verification record
+├── build-profile.json5                    // Products and shared module configuration
 └── oh-package.json5                       // Global package configuration
 ```
+
+---
+
+## Build and run
+
+Install DevEco Studio and OpenHarmony SDK API 23. Configure development signing in
+`build-profile.json5`; signing files live in the ignored `signatures/` directory.
+Generated signing materials and local SDK paths must stay local.
+
+```powershell
+devecocli build --product default --modules entry
+devecocli build --product watch --modules watch
+
+devecocli run --product default --module entry --device "Pura 80 Pro"
+devecocli run --product watch --module watch --device Huawei_Wearable
+```
+
+Select the equivalent `default` or `watch` product in DevEco Studio.
+Signed packages are produced at:
+
+- `entry/build/default/outputs/default/entry-default-signed.hap`
+- `watch/build/watch/outputs/default/watch-default-signed.hap`
+
+CI uses the [Oniro App Builder](https://github.com/eclipse-oniro4openharmony/oniro-app-builder)
+with SDK 6.1 (API 23), generates development signing materials and builds both products.
+Artifacts are named `MyMeteo-default` and `MyMeteo-watch`.
+
+## Core regression tests
+
+The host tests run the production data layer with substituted platform APIs. They cover
+cache freshness, forced refresh and offline fallback, input validation, weather mapping, HTTP cleanup
+and retries, database cleanup, permission handling, ViewModel initialization, location startup,
+saved-city ordering, previews and transactional deletion, superseded responses, forecast weekdays
+and background transitions.
+
+```powershell
+npm install --no-save --package-lock=false typescript@4.9.5
+node --test tests/core.test.cjs
+```
+
+Alternatively, point `CORE_TYPESCRIPT_PATH` at DevEco's installed TypeScript module.
+Host tests complement the ArkTS builds and emulator checks; they do not replace them.
+
+See [VALIDATION.md](VALIDATION.md) for the PoC review and verification record.
+
+## License
+
+See [LICENSE.txt](LICENSE.txt).

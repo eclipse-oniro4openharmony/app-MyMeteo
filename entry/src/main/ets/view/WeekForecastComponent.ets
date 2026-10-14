@@ -11,13 +11,14 @@ export struct WeekForecastComponent {
 
       if (this.forecast != null) {
 
-        List() {
+        Column() {
           ForEach(this.forecast?.daily?.time, (date: number, index: number) => {
 
-            ListItem() {
+            Column() {
 
               ForecastDayItem({
                 date: date,
+                utcOffsetSeconds: this.forecast?.utc_offset_seconds,
                 precipitationProbability: this.forecast?.daily?.precipitation_probability_max?.[index] ?? 0,
                 weatherCode: this.forecast?.daily?.weather_code?.[index] ?? 0,
                 maxTemp: this.forecast?.daily?.temperature_2m_max?.[index] ?? 0,
@@ -33,10 +34,10 @@ export struct WeekForecastComponent {
     }
     .alignItems(HorizontalAlign.Start)
     .borderRadius(20)
-    .backgroundColor(0x22000000)
-    .shadow(ShadowStyle.OUTER_DEFAULT_SM)
+    .backgroundColor(0x4D102A43)
+    .shadow({ radius: 8, color: '#24182431', offsetX: 0, offsetY: 4 })
     .padding(16)
-    .width("95%")
+    .width("100%")
     .margin({
       top: 16
     })

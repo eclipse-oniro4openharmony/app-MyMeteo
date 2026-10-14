@@ -1,50 +1,78 @@
-/**
- * Sends an HTTP request and returns the response data of a generic type.
- * This function uses the '@ohos.net.http' module to make the request and
- * parse the JSON response body.
- *
- * @template T - The expected type of the JSON-parsed response.
- * @param {string} url - The target URL for the HTTP request.
- * @param {http.RequestMethod} method - The HTTP method (GET, POST, etc.).
- * @returns {Promise<T>} A promise that resolves to the parsed response data of type T.
- * @throws {AppError} Throws an AppError if the network request fails,
- *                    the response code is not 200, or JSON parsing fails.
- */
 import http from '@ohos.net.http';
 import { AppError } from '../common/AppError';
 
+const MAX_ATTEMPTS = 3;
+const BASE_RETRY_DELAY_MS = 1000;
+const MAX_RETRY_DELAY_MS = 5000;
+// Keep interactive requests bounded; do not retry before the server permits it.
+const RETRYABLE_STATUS_CODES: number[] = [429, 502, 503, 504];
+
 export async function makeHttpRequest<T>(url: string, method: http.RequestMethod): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const httpRequest = http.createHttp();
-
-    httpRequest.request(url, {
-      method: method,
-      header: {
-        'Content-Type': 'application/json'
-      }
-    }, (err, data: http.HttpResponse) => {
-      console.debug('HTTP request: ' + method + ' ' + url);
-
-      if (err) {
-        console.error('An error occurred:', JSON.stringify(err));
-        reject(new AppError(1001, 'Unable to fetch data'));
-        return;
-      }
-
+  for (let attempt = 1; ; attempt++) {
+    const response = await sendRequest(url, method);
+    if (response.responseCode === 200) {
       try {
-        console.debug('HTTP response code:' + data.responseCode);
-        if (data.responseCode !== 200) {
-          reject(new AppError(1002, 'HTTP error ' + data.responseCode));
-          return;
-        }
-
-        const response: T = JSON.parse(data.result as string);
-        resolve(response);
-      } catch (parseError) {
-        console.error('Error parsing data:', parseError);
-        reject(new AppError(1003, 'Invalid response format'));
+        return JSON.parse(response.result as string) as T;
+      } catch (error) {
+        throw new AppError(1003, 'Invalid response format');
       }
-    });
-  });
+    }
+    if (attempt >= MAX_ATTEMPTS || !RETRYABLE_STATUS_CODES.includes(response.responseCode)) {
+      throw new AppError(1002, httpErrorMessage(response.responseCode));
+    }
+    const delay = retryDelay(response, attempt);
+    if (delay > MAX_RETRY_DELAY_MS) {
+      throw new AppError(1002, httpErrorMessage(response.responseCode));
+    }
+    console.warn(`[makeHttpRequest] HTTP ${response.responseCode}, retry ${attempt}/${MAX_ATTEMPTS - 1} in ${delay} ms`);
+    await sleep(delay);
+  }
 }
 
+async function sendRequest(url: string, method: http.RequestMethod): Promise<http.HttpResponse> {
+  // An HttpRequest object serves a single request, so every attempt needs a new one.
+  const request = http.createHttp();
+  try {
+    return await request.request(url, {
+      method: method,
+      header: { 'Content-Type': 'application/json', 'User-Agent': 'MyMeteo/1.0 (https://github.com/pmandes/app-MyMeteo)' },
+      connectTimeout: 10000,
+      readTimeout: 10000
+    });
+  } catch (error) {
+    throw new AppError(1001, 'Unable to fetch data. Check your connection.');
+  } finally {
+    request.destroy();
+  }
+}
+
+function retryDelay(response: http.HttpResponse, attempt: number): number {
+  const retryAfter = headerValue(response.header, 'retry-after');
+  if (retryAfter) {
+    const value = retryAfter.trim();
+    if (/^\d+$/.test(value)) { return Number(value) * 1000; }
+    const date = /^[A-Za-z]/.test(value) ? Date.parse(value) : NaN;
+    if (Number.isFinite(date)) { return Math.max(0, date - Date.now()); }
+  }
+  return Math.min(BASE_RETRY_DELAY_MS * Math.pow(2, attempt - 1), MAX_RETRY_DELAY_MS);
+}
+
+function headerValue(header: Object, name: string): string | undefined {
+  const headers = (header ?? {}) as Record<string, string>;
+  const key = Object.keys(headers).find(key => key.toLowerCase() === name);
+  return key === undefined ? undefined : String(headers[key]);
+}
+
+function httpErrorMessage(responseCode: number): string {
+  if (responseCode === 429) {
+    return 'Too many requests (HTTP 429). Try again in a moment.';
+  }
+  if (responseCode === 502 || responseCode === 503 || responseCode === 504) {
+    return `Service temporarily unavailable (HTTP ${responseCode}). Try again in a moment.`;
+  }
+  return 'HTTP error ' + responseCode;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
+}

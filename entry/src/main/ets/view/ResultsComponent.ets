@@ -1,16 +1,17 @@
-import { City, CurrentWeather, Forecast } from '@mymeteo/data';
+import { City, CurrentWeather } from '@mymeteo/data';
 import { ViewState } from '../pages/Index';
-import { weatherViewModel } from '../viewmodel/WeatherViewModel';
 import { CityInfoItem } from './ui/CityInfoItem';
+import { SavedCityWeather } from '../viewmodel/WeatherViewModel';
 
 @Component
 export struct ResultsComponent {
-  @Link results: City[];
-  @Link selectedCity: City | null;
-  @Link savedCities: City[];
-  @Link currentWeather: CurrentWeather | null;
-  @Link forecast: Forecast | null;
-  @Link viewState: ViewState;
+  @Prop results: City[];
+  @Prop savedCities: City[];
+  @Prop savedCityWeather: SavedCityWeather[] = [];
+  @Prop viewState: ViewState;
+  @Prop historyBusy: boolean = false;
+  onCitySelect: (city: City) => void = () => {};
+  onDeleteCity: (city: City) => void = () => {};
 
   build() {
 
@@ -24,53 +25,54 @@ export struct ResultsComponent {
           }) {
             Text("No results...")
               .fontColor(Color.White)
-              .textShadow({ color: Color.White, offsetX: 2, offsetY: 2, radius: 2 })
+              .textShadow({ color: '#33182431', offsetX: 0, offsetY: 1, radius: 3 })
           }
           .flexGrow(1)
 
         } else {
 
-          List() {
+          Column() {
             ForEach(this.results, (item: City) => {
-              ListItem() {
+              Column() {
                 CityInfoItem({ city: item })
-              }.onClick(event => this.handleOnClick(item))
+              }.onClick(() => this.onCitySelect(item))
             })
-          }.height("89%").scrollBar(BarState.Off)
+          }.width('100%')
         }
       }
 
       if (this.viewState == ViewState.IDLE) {
         if (this.savedCities.length > 0) {
-          Text("Search history:")
-            .fontColor(Color.White)
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .textShadow({ color: Color.Black, offsetX: 1, offsetY: 1, radius: 1 })
-            .alignSelf(ItemAlign.Start)
-            .margin({top: 16})
-
-          List() {
+          Column() {
             ForEach(this.savedCities, (item: City) => {
-              ListItem() {
-                CityInfoItem({ city: item })
-              }.onClick(event => this.handleOnClick(item))
-            })
-          }.height("89%").scrollBar(BarState.Off)
+              Column() {
+                CityInfoItem({ city: item, currentWeather: this.cachedWeather(item) })
+              }
+              .id(`history-city-${item.place_id}`)
+              .enabled(!this.historyBusy)
+              .gesture(GestureGroup(GestureMode.Exclusive,
+                LongPressGesture({ repeat: false, duration: 600 })
+                  .onAction(() => this.confirmDelete(item)),
+                TapGesture().onAction(() => this.onCitySelect(item))
+              ))
+            }, (item: City) => String(item.place_id))
+          }.width('100%')
         }
       }
-    }
+    }.width('100%').padding({ left: 12, right: 12, bottom: 12 })
   }
 
-  handleOnClick(city: City) {
+  cachedWeather(city: City): CurrentWeather | null {
+    return this.savedCityWeather.find((saved: SavedCityWeather) => saved.cityId === city.place_id)?.currentWeather ?? null;
+  }
 
-    this.selectedCity = city;
-    const weatherData = weatherViewModel.getWeatherData(city);
-
-    weatherData.then(data => {
-      this.currentWeather = data.currentWeather;
-      this.forecast = data.forecast;
-      this.viewState = ViewState.SHOW_CITY
+  confirmDelete(city: City): void {
+    if (this.historyBusy || this.viewState !== ViewState.IDLE) { return; }
+    this.getUIContext().showAlertDialog({
+      title: 'Delete?',
+      message: `Remove ${city.name || city.display_name || 'this city'} from saved cities?`,
+      primaryButton: { value: 'Cancel', defaultFocus: true, action: () => {} },
+      secondaryButton: { value: 'Delete', fontColor: '#C84040', action: () => this.onDeleteCity(city) }
     });
   }
 }
